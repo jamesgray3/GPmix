@@ -124,7 +124,6 @@ class Projector():
         #return basis as a FDataGrid object
         return skfda.concatenate(basis_grid)
 
-
     def _generate_basis(self) -> FDataGrid:
         '''Generate projection functions from Fourier Basis, B-spline basis, Ornstein-Uhlenbeck process, or Wavelet basis.'''
 
@@ -220,10 +219,9 @@ class Projector():
                 orthogonalized_funs = orthogonalized_funs.concatenate(fun_.copy())
 
         return orthogonalized_funs
-
-
-    def _compute_coefficients(self, fdata: FDataGrid):
-        '''Orthogonalize a given set of basis function (or ensure orthogonality), and compute projection coefficient'''
+    
+    def _prepare_basis(self, fdata) -> FDataGrid:
+        '''Create set of basis functions and ensure orthogonality if necessary.'''
         basis = self._generate_basis()
 
         assert all((basis.grid_points[0].shape == fdata.grid_points[i].shape for i in range(len(fdata.grid_points)))), 'Set the appropriate sample_points for basis functions; number of sample points for both objects, the basis and the functional sample data, must be equal.'
@@ -233,9 +231,8 @@ class Projector():
         if self.basis_type not in ['ou', 'wavelet']:
             while not self._is_orthogonal(basis):
                 basis = self._gram_schmidt(basis)
-
-        return inner_product_matrix(basis, fdata), basis
-
+        
+        return basis
 
     def _compute_fpc(self, fdata):
         '''Construct the eigenfunction'''
@@ -250,23 +247,22 @@ class Projector():
         '''
         self.domain_range = fdata.domain_range[0]
         self.grid_points = fdata.grid_points[0]
-        #center data
+
+        # center data
         fdata = fdata - fdata.mean()
 
+        # set basis functions
         if self.basis_type in ['fourier', 'ou', 'wavelet', 'bspline']:
-            self.coefficients, self.basis = self._compute_coefficients(fdata)
-
+            self.basis = self._prepare_basis(fdata)
         elif self.basis_type == 'fpc':
             self.basis = self._compute_fpc(fdata)
-            self.coefficients =  inner_product_matrix(self.basis, fdata)
-
         elif self.basis_type == 'rl-fpc':
             self.basis = self._compute_fpc_combination(fdata)
-            self.coefficients =  inner_product_matrix(self.basis, fdata)
-
         else:
-            raise ValueError(f"Unknown basis_type: {self.basis_type}. Choose from the supported options: 'fourier', 'bspline', 'ou', 'rl-fpc', 'wavelet', 'fpc'.")
-        
+            raise ValueError(f"Unknown basis_type: {self.basis_type}. Choose from the supported options: 'fourier', 'bspline', 'ou', 'rl-fpc', 'wavelet', 'fpc'.")            
+
+        self.coefficients = inner_product_matrix(self.basis, fdata)
+
         return self.coefficients
 
     def plot_basis(self, **kwargs):
