@@ -1,11 +1,13 @@
 import skfda
 from skfda.representation.grid import FDataGrid
 from skfda.representation.basis import FDataBasis, FourierBasis, BSplineBasis
-from skfda.misc import inner_product, inner_product_matrix
+from skfda.misc import inner_product, inner_product_matrix, fast_dpa
 from skfda.preprocessing.dim_reduction import FPCA
 from skfda.exploratory.visualization import FPCAPlot
 from skfda.misc.covariances import Exponential
 from skfda.datasets import make_gaussian_process
+
+from joblib import Parallel, delayed
 
 import numpy as np
 import pywt
@@ -51,10 +53,11 @@ class Projector():
         Visualize the distribution of projection coefficients.
     
     '''
-    def __init__(self, basis_type: str, n_proj: int = 3, basis_params: dict = {} ) -> None: 
+    def __init__(self, basis_type: str, n_proj: int = 3, basis_params: dict = {}, time_warped: bool = False) -> None: 
         self.basis_type = basis_type
         self.n_proj = n_proj
         self.basis_params = basis_params
+        self.time_warped = time_warped
         
         #check the basis_param does not contain unwanted keys
         if not all(key in ['period', 'order', 'wv_name', 'resolution'] for key in self.basis_params.keys()):
@@ -240,6 +243,22 @@ class Projector():
         basis = fpca_.fit(fdata).components_
         return basis
 
+    def _maximised_inner_product_matrix(self, fdata) -> np.ndarray:
+
+        def compute_coefficient(basis, sample, n=20, radius=2):
+            return fast_dpa(basis, sample, n=n, radius=radius)[0]
+    
+        basis_funcs = [self.basis[i].data_matrix.flatten() for i in range(self.n_proj)]
+        sample_funcs = [fdata[j].data_matrix.flatten() for j in range(fdata.n_samples)]
+
+        coeffs = Parallel(n_jobs=-1)(
+            delayed(compute_coefficient)(basis_funcs[i], sample_funcs[j])
+            for i in range(self.n_proj)
+            for j in range(fdata.n_samples)
+        )
+
+        return np.array(coeffs).reshape((self.n_proj, fdata.n_samples))
+
     def fit(self, fdata: FDataGrid):
         '''
         Returns the projection coefficients of sample functions fdata
@@ -248,7 +267,8 @@ class Projector():
         self.grid_points = fdata.grid_points[0]
 
         # center data
-        fdata = fdata - fdata.mean()
+        if not self.time_warped:
+            fdata = fdata - fdata.mean()
 
         # set basis functions
         if self.basis_type in ['fourier', 'ou', 'wavelet', 'bspline']:
@@ -260,7 +280,11 @@ class Projector():
         else:
             raise ValueError(f"Unknown basis_type: {self.basis_type}. Choose from the supported options: 'fourier', 'bspline', 'ou', 'rl-fpc', 'wavelet', 'fpc'.")            
 
-        self.coefficients = inner_product_matrix(self.basis, fdata)
+        # compute projection coefficients
+        if self.time_warped:
+            self.coefficients = self._maximised_inner_product_matrix(fdata)
+        else:
+            self.coefficients = inner_product_matrix(self.basis, fdata)
 
         return self.coefficients
 
