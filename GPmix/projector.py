@@ -240,7 +240,6 @@ class Projector():
         basis = fpca_.fit(fdata).components_
         return basis
 
-
     def fit(self, fdata: FDataGrid):
         '''
         Returns the projection coefficients of sample functions fdata
